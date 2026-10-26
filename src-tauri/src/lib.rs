@@ -2100,14 +2100,28 @@ fn rename_preview_for_file(_root: &Path, file: &LibraryFile) -> Option<RenamePre
     })
 }
 
+fn strip_bracket_prefix(base: &str) -> String {
+    // 剥离文件名开头的方括号前缀，如 `[LTX模型破解]SNIS-623-UC` -> `SNIS-623-UC`
+    let mut stripped = base.trim();
+    loop {
+        let Some(rest) = stripped.strip_prefix('[').and_then(|s| s.find(']').map(|i| &s[i + 1..])) else {
+            break;
+        };
+        stripped = rest.trim();
+    }
+    stripped.to_string()
+}
+
 fn normalize_dash(base: &str) -> String {
+    let base = strip_bracket_prefix(base);
+
     let fc2 = Regex::new(r"(?i)^FC2[-_ ]?PPV[-_ ]?(\d{6,8})(.*)$").unwrap();
-    if let Some(captures) = fc2.captures(base) {
+    if let Some(captures) = fc2.captures(&base) {
         return format!("FC2PPV-{}{}", &captures[1], &captures[2]);
     }
 
     let leading_digits = Regex::new(r"(?i)^([0-9]{3}[A-Z]+)[-_ ]?(\d{3,5})(.*)$").unwrap();
-    if let Some(captures) = leading_digits.captures(base) {
+    if let Some(captures) = leading_digits.captures(&base) {
         return format!(
             "{}-{}{}",
             &captures[1],
@@ -2117,7 +2131,7 @@ fn normalize_dash(base: &str) -> String {
     }
 
     let letters = Regex::new(r"(?i)^([A-Z]{2,6})[-_ ]?(\d{3,5})(.*)$").unwrap();
-    if let Some(captures) = letters.captures(base) {
+    if let Some(captures) = letters.captures(&base) {
         return format!(
             "{}-{}{}",
             &captures[1],
@@ -2127,7 +2141,7 @@ fn normalize_dash(base: &str) -> String {
     }
 
     let digit_letter = Regex::new(r"(\d{3})([A-Za-z])").unwrap();
-    digit_letter.replace(base, "$1-$2").to_string()
+    digit_letter.replace(&base, "$1-$2").to_string()
 }
 
 fn normalize_suffix(suffix: &str) -> String {
@@ -4873,6 +4887,20 @@ mod tests {
         assert_eq!(normalize_dash("SSNI025"), "SSNI-025");
         assert_eq!(normalize_dash("300MIUM1357"), "300MIUM-1357");
         assert_eq!(normalize_dash("fc2ppv4883198"), "FC2PPV-4883198");
+    }
+
+    #[test]
+    fn strips_bracket_prefix_before_normalizing() {
+        assert_eq!(
+            normalize_dash("[LTX模型破解]SNIS-623-UC"),
+            "SNIS-623-UC"
+        );
+        assert_eq!(
+            normalize_dash("[LTX模型破解]IPX-588-UC"),
+            "IPX-588-UC"
+        );
+        assert_eq!(normalize_dash("SNIS-623-UC"), "SNIS-623-UC");
+        assert_eq!(normalize_dash("[前缀]SSNI025"), "SSNI-025");
     }
 
     #[test]
