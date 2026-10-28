@@ -237,7 +237,7 @@ button {
 .primary-button:disabled,
 .ghost-button:disabled,
 .danger-button:disabled {
-  cursor: wait;
+  cursor: not-allowed;
   opacity: 0.5;
 }
 
@@ -1753,6 +1753,12 @@ button {
 /* 搜索中：保持正常配色，不触发 disabled 的灰蓝 + 转圈光标。 */
 .archive-search-all.searching {
   cursor: default;
+  opacity: 1;
+}
+
+/* 未联网/无可搜索时的禁用态：保持正常配色，仅用 not-allowed 光标提示不可点。 */
+.archive-search-all:disabled {
+  cursor: not-allowed;
   opacity: 1;
 }
 
