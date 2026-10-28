@@ -659,7 +659,7 @@ fn get_archive_lookup(
 }
 
 #[tauri::command]
-fn search_archive_metadata(
+async fn search_archive_metadata(
     root_path: String,
     code: String,
     site_url: Option<String>,
@@ -708,20 +708,32 @@ fn search_archive_metadata(
         load_metadata_session(&db, &site_host).map_err(|error| error.to_string())?
     };
 
-    let result = lookup_javbus_metadata(
-        site,
-        &normalized_code,
-        &actors,
-        &state.data_dir,
-        session.as_ref(),
-    )
+    // 联网搜索是阻塞的 WinHTTP 调用，放到 blocking 线程池执行，避免阻塞 UI。
+    let data_dir = state.data_dir.clone();
+    let site_owned = site.to_string();
+    let code_owned = normalized_code.clone();
+    let actors_owned = actors.clone();
+    let session_owned = session.clone();
+    let site_for_error = site_owned.clone();
+    let code_for_error = code_owned.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        lookup_javbus_metadata(
+            &site_owned,
+            &code_owned,
+            &actors_owned,
+            &data_dir,
+            session_owned.as_ref(),
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
     .unwrap_or_else(|error| ArchiveLookup {
-        code: normalized_code.clone(),
+        code: code_for_error.clone(),
         status: "searched".to_string(),
         actor_name: None,
         actor_path: None,
         avatar_path: None,
-        source_url: Some(build_metadata_search_url(site, &normalized_code)),
+        source_url: Some(build_metadata_search_url(&site_for_error, &code_for_error)),
         message: format!("联网搜索失败：{}", error),
         searched_at: now_string(),
     });
@@ -2176,6 +2188,12 @@ fn normalize_suffix(suffix: &str) -> String {
     }
 }
 
+fn normalize_ltx_suffix(base: &str) -> String {
+    // LTX 是"模型破解/去码"标记，语义等价于无码 U：IPZZ-037-LTX -> IPZZ-037-U
+    let ltx_tail = Regex::new(r"(?i)[-_ .]*LTX[-_ .]*$").unwrap();
+    ltx_tail.replace(base, "-U").to_string()
+}
+
 fn normalize_uncensored_suffix(base: &str) -> String {
     let marker = Regex::new(r"(?i)(UNCENSORED|RESTORED)").unwrap();
     if !marker.is_match(base) {
@@ -2448,6 +2466,8 @@ fn build_target_file_name(source_name: &str, options: &ProcessingOptions) -> Str
     if options.uppercase {
         base = base.to_uppercase();
     }
+
+    base = normalize_ltx_suffix(&base);
 
     if options.normalize_uncensored_suffix {
         base = normalize_uncensored_suffix(&base);
@@ -4945,6 +4965,31 @@ mod tests {
             build_target_file_name("hhd800.com@snos224u.mp4", &options),
             "SNOS-224-U.mp4"
         );
+    }
+
+    #[test]
+    fn normalizes_ltx_suffix_to_u() {
+        let options = ProcessingOptions {
+            move_to_appreciation: true,
+            rename_enabled: true,
+            uppercase: true,
+            normalize_dash: true,
+            normalize_uncensored_suffix: false,
+            remove_at_prefix: true,
+            skip_if_exists: true,
+            delete_source_folder_after_move: false,
+        };
+        assert_eq!(
+            build_target_file_name("489155.com@IPZZ-037-LTX.mp4", &options),
+            "IPZZ-037-U.mp4"
+        );
+        assert_eq!(
+            build_target_file_name("489155.com@MIDA-849-LTX.mp4", &options),
+            "MIDA-849-U.mp4"
+        );
+        assert_eq!(normalize_ltx_suffix("IPZZ-037-LTX"), "IPZZ-037-U");
+        assert_eq!(normalize_ltx_suffix("IPZZ-037LTX"), "IPZZ-037-U");
+        assert_eq!(normalize_ltx_suffix("IPZZ-037-UC"), "IPZZ-037-UC");
     }
 
     #[test]
