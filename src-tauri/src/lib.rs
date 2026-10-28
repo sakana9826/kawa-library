@@ -1188,8 +1188,7 @@ pub fn run() {
                 // 退出请求一到就通知阻塞的联网搜索线程停止，避免进程退出后残留。
                 SHUTTING_DOWN.store(true, Ordering::Relaxed);
             }
-        })
-        .expect("failed to run Kawa Library");
+        });
 }
 
 fn open_database(data_dir: &Path) -> Result<Connection, Box<dyn std::error::Error>> {
