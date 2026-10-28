@@ -1750,6 +1750,12 @@ button {
   font-size: 13px;
 }
 
+/* 搜索中：保持正常配色，不触发 disabled 的灰蓝 + 转圈光标。 */
+.archive-search-all.searching {
+  cursor: default;
+  opacity: 1;
+}
+
 .archive-actor-picker {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));

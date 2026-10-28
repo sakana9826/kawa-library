@@ -1575,12 +1575,12 @@ function ArchivePage({
             <span className="pill good">{searchedCount} 已搜索</span>
             <span className="pill">{unsearchedCount} 未搜索</span>
             <button
-              className="primary-button archive-search-all"
-              disabled={!onlineMetadataActive || searchingCount > 0 || unsearchedCount === 0}
+              className={`primary-button archive-search-all${searchingCount > 0 ? " searching" : ""}`}
+              disabled={!onlineMetadataActive || unsearchedCount === 0}
               onClick={searchAllUnsearched}
               title={unsearchedCount === 0 ? "没有需要搜索的番号" : "对未搜索的番号批量联网搜索"}
             >
-              <Search size={16} />
+              {searchingCount > 0 ? <Loader2 className="spin" size={16} /> : <Search size={16} />}
               <span>
                 {searchingCount > 0
                   ? `搜索中 ${searchingCount}/${unsearchedCount + searchingCount}`
