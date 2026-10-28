@@ -16,12 +16,15 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     ptr,
-    sync::{Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex, OnceLock,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
-use tauri::{Manager, PhysicalSize, Size, WindowEvent};
+use tauri::{Manager, PhysicalSize, RunEvent, Size, WindowEvent};
 use walkdir::WalkDir;
 
 #[cfg(target_os = "windows")]
@@ -52,6 +55,9 @@ const DEFAULT_COVER_CAPTURE_PERCENT: f64 = 10.0;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 static APP_RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// app 正在退出时置位，用于让阻塞的联网搜索线程尽快停止，避免退出后残留。
+static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 
 struct AppState {
     db: Mutex<Connection>,
@@ -1175,7 +1181,14 @@ pub fn run() {
             save_manual_metadata_session,
             refresh_actor_avatar
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
+        .expect("failed to build Kawa Library")
+        .run(|_app, event| {
+            if let RunEvent::ExitRequested { .. } = event {
+                // 退出请求一到就通知阻塞的联网搜索线程停止，避免进程退出后残留。
+                SHUTTING_DOWN.store(true, Ordering::Relaxed);
+            }
+        })
         .expect("failed to run Kawa Library");
 }
 
@@ -4678,6 +4691,9 @@ fn http_get(
     metadata_session: Option<&MetadataSession>,
     referer: Option<&str>,
 ) -> Result<HttpResponse> {
+    if SHUTTING_DOWN.load(Ordering::Relaxed) {
+        anyhow::bail!("应用正在退出，取消联网请求");
+    }
     let parsed = ParsedUrl::parse(url).ok_or_else(|| anyhow::anyhow!("URL 无效"))?;
     let port = parsed.port.unwrap_or(if parsed.scheme == "https" {
         INTERNET_DEFAULT_HTTPS_PORT

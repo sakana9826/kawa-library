@@ -1333,13 +1333,25 @@ function ArchivePage({
       return (!lookup || needsArchiveLookupRefresh(lookup)) && !autoSearchRef.current.has(code);
     });
     if (pending.length === 0) return;
-    void (async () => {
-      for (const code of pending) {
-        if (cancelled) break;
+
+    // 受控并发：最多同时发 AUTO_SEARCH_CONCURRENCY 个搜索，避免一次性堆满线程。
+    const AUTO_SEARCH_CONCURRENCY = 3;
+    const queue = [...pending];
+    let inFlight = 0;
+    const launch = (): void => {
+      if (cancelled) return;
+      while (inFlight < AUTO_SEARCH_CONCURRENCY && queue.length > 0) {
+        const code = queue.shift()!;
+        if (autoSearchRef.current.has(code)) continue;
         autoSearchRef.current.add(code);
-        await searchCode(code);
+        inFlight += 1;
+        searchCode(code).finally(() => {
+          inFlight -= 1;
+          launch();
+        });
       }
-    })();
+    };
+    launch();
     return () => {
       cancelled = true;
     };
