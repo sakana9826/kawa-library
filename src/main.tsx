@@ -1282,6 +1282,8 @@ function ArchivePage({
     return entry && !needsArchiveLookupRefresh(entry);
   }).length;
   const unsearchedCount = archiveCodes.length - searchedCount;
+  // 当前正在搜索中的番号数量（用于一键搜索按钮显示进度）。
+  const searchingCount = archiveCodes.filter((code) => searchingCodes.has(code)).length;
   const isLookupInvalid = lookup ? needsArchiveLookupRefresh(lookup) : false;
   const lookupActorExists = Boolean(lookup?.actorPath && actors.some((actor) => actor.path === lookup.actorPath));
   const createActorName = !isLookupInvalid && lookup?.actorName && !lookupActorExists ? lookup.actorName : "";
@@ -1408,6 +1410,33 @@ function ArchivePage({
         return next;
       });
     }
+  }
+
+  // 一键搜索：对当前所有「未搜索/待刷新」的番号并发触发搜索，受控并发上限。
+  function searchAllUnsearched() {
+    if (!settings.onlineMetadataEnabled) return;
+    const targets = archiveCodes.filter((code) => {
+      if (!onlineMetadataActive && !isFc2ArchiveCode(code)) return false;
+      if (searchingCodes.has(code)) return false;
+      const lookup = lookups[code];
+      return !lookup || needsArchiveLookupRefresh(lookup);
+    });
+    if (targets.length === 0) return;
+    const CONCURRENCY = 3;
+    const queue = [...targets];
+    let inFlight = 0;
+    const launch = () => {
+      while (inFlight < CONCURRENCY && queue.length > 0) {
+        const code = queue.shift()!;
+        if (searchingCodes.has(code)) continue;
+        inFlight += 1;
+        void searchCode(code).finally(() => {
+          inFlight -= 1;
+          launch();
+        });
+      }
+    };
+    launch();
   }
 
   function operationSummary(label: string, result: OperationResult) {
@@ -1545,6 +1574,19 @@ function ArchivePage({
             <span className="pill warn">{videos.length} 部待归档</span>
             <span className="pill good">{searchedCount} 已搜索</span>
             <span className="pill">{unsearchedCount} 未搜索</span>
+            <button
+              className="primary-button archive-search-all"
+              disabled={!onlineMetadataActive || searchingCount > 0 || unsearchedCount === 0}
+              onClick={searchAllUnsearched}
+              title={unsearchedCount === 0 ? "没有需要搜索的番号" : "对未搜索的番号批量联网搜索"}
+            >
+              <Search size={16} />
+              <span>
+                {searchingCount > 0
+                  ? `搜索中 ${searchingCount}/${unsearchedCount + searchingCount}`
+                  : "一键搜索全部"}
+              </span>
+            </button>
           </div>
         </div>
 

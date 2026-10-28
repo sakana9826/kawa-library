@@ -1737,8 +1737,17 @@ button {
 .archive-summary {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: 6px;
+}
+
+.archive-search-all {
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  box-shadow: none;
+  font-size: 13px;
 }
 
 .archive-actor-picker {
