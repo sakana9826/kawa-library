@@ -1458,7 +1458,12 @@ button {
 }
 
 .dedup-file-button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
   width: 100%;
+  min-width: 0;
   border: 0;
   border-radius: 7px;
   background: transparent;
@@ -1467,6 +1472,40 @@ button {
 
 .dedup-file-button:hover {
   background: rgba(0, 161, 214, 0.07);
+}
+
+.dedup-file-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dedup-file-row .dedup-file-button {
+  flex: 1;
+}
+
+.dedup-delete-button {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #bbb;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.dedup-delete-button:hover {
+  background: rgba(229, 57, 53, 0.1);
+  color: #e53935;
+}
+
+.dedup-delete-button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .dedup-file-main strong {

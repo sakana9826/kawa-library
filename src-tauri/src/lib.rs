@@ -889,6 +889,25 @@ fn delete_archive_video(
     Ok(result)
 }
 #[tauri::command]
+fn delete_library_file(
+    root_path: String,
+    video_path: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<OperationResult, String> {
+    let root = canonical_root(&root_path).map_err(|error| error.to_string())?;
+    let mut result = OperationResult::default();
+    let outcome = delete_library_file_at(&root, &video_path);
+    push_outcome(&mut result, "delete_library_file", &video_path, "", outcome);
+
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| "Database lock is poisoned".to_string())?;
+    persist_logs(&db, &mut result.logs).map_err(|error| error.to_string())?;
+
+    Ok(result)
+}
+#[tauri::command]
 fn load_actor_profiles(state: tauri::State<'_, AppState>) -> Result<Vec<ActorProfile>, String> {
     let db = state
         .db
@@ -1136,6 +1155,7 @@ pub fn run() {
             execute_archive_move,
             execute_archive_move_to_new_actor,
             delete_archive_video,
+            delete_library_file,
             load_actor_profiles,
             load_metadata_session_status,
             import_browser_metadata_session,
@@ -3219,6 +3239,12 @@ fn delete_archive_file(root: &Path, appreciation_dir: &Path, video_path: &str) -
     if !source.starts_with(&appreciation_dir) {
         anyhow::bail!("只能删除欣赏区内的视频");
     }
+    fs::remove_file(&source).context("删除视频失败")?;
+    Ok("删除成功".to_string())
+}
+
+fn delete_library_file_at(root: &Path, video_path: &str) -> Result<String> {
+    let source = ensure_existing_file_under_root(root, video_path)?;
     fs::remove_file(&source).context("删除视频失败")?;
     Ok("删除成功".to_string())
 }

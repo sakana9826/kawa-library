@@ -595,6 +595,23 @@ function App() {
     }
   }
 
+  async function deleteLibraryFile(path: string): Promise<boolean> {
+    const confirmed = window.confirm(`确定删除「${path.split(/[\\/]/).pop()}」吗？此操作不可恢复。`);
+    if (!confirmed) return false;
+    try {
+      const result = await invoke<OperationResult>("delete_library_file", {
+        rootPath: settings.rootPath,
+        videoPath: path
+      });
+      setStatus(`删除完成：成功 ${result.success}，跳过 ${result.skipped}，失败 ${result.failed}`);
+      await refreshLogs();
+      return result.success > 0;
+    } catch (err) {
+      setError(formatError(err));
+      return false;
+    }
+  }
+
   async function openExternal(url: string) {
     try {
       await invoke("open_external_url", { url });
@@ -695,7 +712,7 @@ function App() {
               }}
             />
           ) : (
-            <DedupPage report={report} onRefresh={scan} isBusy={isBusy} onOpenFileLocation={openFileLocation} />
+            <DedupPage report={report} onRefresh={scan} isBusy={isBusy} onOpenFileLocation={openFileLocation} onDeleteFile={deleteLibraryFile} />
           )
         ) : (
           <EmptyState onScan={scan} isBusy={isBusy} isBooting={isBooting} />
@@ -1052,12 +1069,14 @@ function DedupPage({
   report,
   isBusy,
   onRefresh,
-  onOpenFileLocation
+  onOpenFileLocation,
+  onDeleteFile
 }: {
   report: ScanReport;
   isBusy: boolean;
   onRefresh: () => void;
   onOpenFileLocation: (path: string) => void;
+  onDeleteFile: (path: string) => Promise<boolean>;
 }) {
   const [showMultipartGroups, setShowMultipartGroups] = useState(() => loadStoredDedupView().showMultipartGroups);
   const [showIgnoredGroups, setShowIgnoredGroups] = useState(() => loadStoredDedupView().showIgnoredGroups);
@@ -1094,6 +1113,18 @@ function DedupPage({
     const next = { ...ignoredAtByKey, [group.key]: Date.now() };
     setIgnoredAtByKey(next);
     saveDedupIgnoreMap(ignoreStorageKey, next);
+  }
+
+  const [deletingPath, setDeletingPath] = useState<string | null>(null);
+
+  async function handleDeleteFile(path: string) {
+    setDeletingPath(path);
+    try {
+      const deleted = await onDeleteFile(path);
+      if (deleted) await onRefresh();
+    } finally {
+      setDeletingPath(null);
+    }
   }
 
   return (
@@ -1156,6 +1187,8 @@ function DedupPage({
                   key={group.id}
                   onIgnore={ignoreGroup}
                   onOpenFileLocation={onOpenFileLocation}
+                  onDeleteFile={handleDeleteFile}
+                  deletingPath={deletingPath}
                 />
               ))}
             </div>
@@ -1684,12 +1717,16 @@ function DedupResultCard({
   group,
   ignoredAt,
   onIgnore,
-  onOpenFileLocation
+  onOpenFileLocation,
+  onDeleteFile,
+  deletingPath
 }: {
   group: DedupDisplayGroup;
   ignoredAt: number | undefined;
   onIgnore: (group: DedupDisplayGroup) => void;
   onOpenFileLocation: (path: string) => void;
+  onDeleteFile: (path: string) => void;
+  deletingPath: string | null;
 }) {
   const isMultipart = isMultipartSuffixDedupGroup(group);
   const isIgnored = typeof ignoredAt === "number" && group.latestModifiedUnix * 1000 <= ignoredAt;
@@ -1716,23 +1753,36 @@ function DedupResultCard({
           <EmptyLine text="这组没有可展示的文件明细" />
         ) : (
           group.files.map((file, index) => (
-            <button
-              className="dup-file dedup-file-row dedup-file-button"
+            <div
+              className="dedup-file-row"
               key={file.path}
-              type="button"
-              onClick={() => onOpenFileLocation(file.path)}
-              title={`打开所在位置：${displayPath(file.path)}`}
             >
-              <span className="num-badge">{index + 1}</span>
-              <div className="dedup-file-main">
-                <strong title={file.name}>{highlightText(file.name, group.highlight)}</strong>
-                <small title={displayPath(file.path)}>{displayPath(parentPath(file.path))}</small>
-              </div>
-              <div className="dedup-file-meta">
-                <span>{formatNumber(file.sizeGb)} GB</span>
-                <span>{file.modified}</span>
-              </div>
-            </button>
+              <button
+                className="dedup-file-button"
+                type="button"
+                onClick={() => onOpenFileLocation(file.path)}
+                title={`打开所在位置：${displayPath(file.path)}`}
+              >
+                <span className="num-badge">{index + 1}</span>
+                <div className="dedup-file-main">
+                  <strong title={file.name}>{highlightText(file.name, group.highlight)}</strong>
+                  <small title={displayPath(file.path)}>{displayPath(parentPath(file.path))}</small>
+                </div>
+                <div className="dedup-file-meta">
+                  <span>{formatNumber(file.sizeGb)} GB</span>
+                  <span>{file.modified}</span>
+                </div>
+              </button>
+              <button
+                className="dedup-delete-button"
+                type="button"
+                onClick={() => onDeleteFile(file.path)}
+                disabled={deletingPath === file.path}
+                title={`删除文件：${displayPath(file.path)}`}
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
           ))
         )}
       </div>
