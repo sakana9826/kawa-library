@@ -149,15 +149,6 @@ type ActorProfile = {
   updatedAt: string;
 };
 
-type MetadataSessionStatus = {
-  siteHost: string;
-  hasCookie: boolean;
-  source: string | null;
-  status: "missing" | "verified" | "blocked" | string;
-  updatedAt: string | null;
-  message: string;
-};
-
 type AvatarRefreshSummary = {
   total: number;
   success: number;
@@ -268,7 +259,6 @@ function App() {
   const [downloadPlans, setDownloadPlans] = useState<DownloadMovePlan[]>([]);
   const [logs, setLogs] = useState<OperationLog[]>([]);
   const [actorProfiles, setActorProfiles] = useState<Record<string, ActorProfile>>({});
-  const [metadataSession, setMetadataSession] = useState<MetadataSessionStatus | null>(null);
   const [selectedActorPath, setSelectedActorPath] = useState<string | null>(null);
   const [options, setOptions] = useState<ProcessingOptions>(loadStoredProcessingOptions);
   const [actorSort, setActorSort] = useState<ActorSort>(() => loadStoredActorView().sort);
@@ -282,13 +272,8 @@ function App() {
   useEffect(() => {
     refreshLogs();
     refreshActorProfiles();
-    void refreshMetadataSessionStatus(settings.metadataSiteUrl);
     void loadCachedOrScan(settings);
   }, []);
-
-  useEffect(() => {
-    void refreshMetadataSessionStatus(settings.metadataSiteUrl);
-  }, [settings.metadataSiteUrl]);
 
   useEffect(() => {
     saveStoredProcessingOptions(options);
@@ -325,40 +310,6 @@ function App() {
     }
   }
 
-  async function refreshMetadataSessionStatus(siteUrl = settings.metadataSiteUrl) {
-    try {
-      const session = await invoke<MetadataSessionStatus>("load_metadata_session_status", {
-        siteUrl
-      });
-      setMetadataSession(session);
-    } catch {
-      setMetadataSession(null);
-    }
-  }
-
-  async function importMetadataSession(siteUrl: string, browser: LibrarySettings["metadataBrowser"]) {
-    const session = await invoke<MetadataSessionStatus>("import_browser_metadata_session", {
-      siteUrl,
-      browser
-    });
-    setMetadataSession(session);
-    return session;
-  }
-
-  async function saveManualMetadataSession(siteUrl: string, cookieHeader: string) {
-    const session = await invoke<MetadataSessionStatus>("save_manual_metadata_session", {
-      siteUrl,
-      cookieHeader
-    });
-    setMetadataSession(session);
-    return session;
-  }
-
-  async function clearMetadataSession(siteUrl: string) {
-    await invoke("clear_metadata_session", { siteUrl });
-    await refreshMetadataSessionStatus(siteUrl);
-  }
-
   async function refreshActorAvatar(actor: ActorSummary) {
     if (!settings.onlineMetadataEnabled) return;
     try {
@@ -370,7 +321,6 @@ function App() {
       setActorProfiles((current) => ({ ...current, [profile.actorPath]: profile }));
     } catch (err) {
       setError(formatError(err));
-      await refreshMetadataSessionStatus(settings.metadataSiteUrl);
     }
   }
 
@@ -406,7 +356,6 @@ function App() {
     if (Object.keys(updates).length > 0) {
       setActorProfiles((current) => ({ ...current, ...updates }));
     }
-    await refreshMetadataSessionStatus(settings.metadataSiteUrl);
     if (lastError) {
       setError(lastError);
     }
@@ -440,14 +389,12 @@ function App() {
   function openSettings() {
     setSettingsDraft(settings);
     setSettingsOpen(true);
-    void refreshMetadataSessionStatus(settings.metadataSiteUrl);
   }
 
   async function saveSettings() {
     setSettings(settingsDraft);
     saveStoredSettings(settingsDraft);
     setSettingsOpen(false);
-    await refreshMetadataSessionStatus(settingsDraft.metadataSiteUrl);
     await scanWithSettings(settingsDraft);
   }
 
@@ -626,8 +573,7 @@ function App() {
     return sortedActors.find((actor) => actor.path === selectedActorPath) ?? sortedActors[0];
   }, [sortedActors, selectedActorPath]);
   const readyCount = downloadPlans.filter((plan) => plan.status === "ready").length;
-  const metadataReady = metadataSession?.status === "verified";
-  const onlineMetadataActive = settings.onlineMetadataEnabled && metadataReady;
+  const onlineMetadataActive = settings.onlineMetadataEnabled;
 
   return (
     <main className="app-shell">
@@ -723,14 +669,8 @@ function App() {
         <SettingsDialog
           draft={settingsDraft}
           setDraft={setSettingsDraft}
-          metadataSession={metadataSession}
           actorCount={report?.actors.length ?? 0}
           onChooseFolder={chooseFolder}
-          onImportSession={importMetadataSession}
-          onSaveManualSession={saveManualMetadataSession}
-          onRefreshSessionStatus={refreshMetadataSessionStatus}
-          onClearSession={clearMetadataSession}
-          onOpenVerificationPage={openExternal}
           onRefreshAllAvatars={refreshAllActorAvatars}
           onClose={() => setSettingsOpen(false)}
           onSave={saveSettings}
@@ -1877,34 +1817,21 @@ function DedupMiniList({
 function SettingsDialog({
   draft,
   setDraft,
-  metadataSession,
   actorCount,
   onChooseFolder,
-  onImportSession,
-  onSaveManualSession,
-  onRefreshSessionStatus,
-  onClearSession,
-  onOpenVerificationPage,
   onRefreshAllAvatars,
   onClose,
   onSave
 }: {
   draft: LibrarySettings;
   setDraft: (settings: LibrarySettings) => void;
-  metadataSession: MetadataSessionStatus | null;
   actorCount: number;
   onChooseFolder: (field: keyof LibrarySettings, defaultPath: string) => void;
-  onImportSession: (siteUrl: string, browser: LibrarySettings["metadataBrowser"]) => Promise<MetadataSessionStatus>;
-  onSaveManualSession: (siteUrl: string, cookieHeader: string) => Promise<MetadataSessionStatus>;
-  onRefreshSessionStatus: (siteUrl?: string) => Promise<void>;
-  onClearSession: (siteUrl: string) => Promise<void>;
-  onOpenVerificationPage: (url: string) => void | Promise<void>;
   onRefreshAllAvatars: () => Promise<AvatarRefreshSummary>;
   onClose: () => void;
   onSave: () => void;
 }) {
   const [sessionBusy, setSessionBusy] = useState(false);
-  const [manualCookie, setManualCookie] = useState("");
   const [sessionMessage, setSessionMessage] = useState("");
 
   function update(field: keyof LibrarySettings, value: string) {
@@ -1922,60 +1849,6 @@ function SettingsDialog({
           }
         : {})
     });
-  }
-
-  const verificationUrl = buildMetadataSearchUrl(draft.metadataSiteUrl || DEFAULT_METADATA_SITE, "IPZZ-832");
-
-  async function handleImportSession() {
-    setSessionBusy(true);
-    setSessionMessage("");
-    try {
-      const result = await onImportSession(draft.metadataSiteUrl, draft.metadataBrowser);
-      setSessionMessage(result.message);
-    } catch (err) {
-      setSessionMessage(formatError(err));
-    } finally {
-      setSessionBusy(false);
-    }
-  }
-
-  async function handleSaveManualSession() {
-    setSessionBusy(true);
-    setSessionMessage("");
-    try {
-      const result = await onSaveManualSession(draft.metadataSiteUrl, manualCookie);
-      setSessionMessage(result.message);
-      setManualCookie("");
-    } catch (err) {
-      setSessionMessage(formatError(err));
-    } finally {
-      setSessionBusy(false);
-    }
-  }
-
-  async function handleRefreshSessionStatus() {
-    setSessionBusy(true);
-    setSessionMessage("");
-    try {
-      await onRefreshSessionStatus(draft.metadataSiteUrl);
-    } catch (err) {
-      setSessionMessage(formatError(err));
-    } finally {
-      setSessionBusy(false);
-    }
-  }
-
-  async function handleClearSession() {
-    setSessionBusy(true);
-    setSessionMessage("");
-    try {
-      await onClearSession(draft.metadataSiteUrl);
-      setSessionMessage("已清除浏览器会话");
-    } catch (err) {
-      setSessionMessage(formatError(err));
-    } finally {
-      setSessionBusy(false);
-    }
   }
 
   async function handleRefreshAllAvatars() {
@@ -2048,62 +1921,17 @@ function SettingsDialog({
             onChoose={() => undefined}
             hideChoose
           />
-          <SelectField
-            label="会话来源"
-            value={draft.metadataBrowser}
-            onChange={(value) => setDraft({ ...draft, metadataBrowser: value as LibrarySettings["metadataBrowser"] })}
-            options={[
-              { label: "自动", value: "auto" },
-              { label: "Edge", value: "edge" },
-              { label: "Chrome", value: "chrome" }
-            ]}
-          />
-          <div className="settings-card">
-            <div className="settings-card-head">
-              <strong>JavBus 会话</strong>
-              <span className={metadataSession?.status === "verified" ? "pill good" : metadataSession?.hasCookie ? "pill warn" : "pill"}>
-                {metadataSession?.status === "verified" ? "已验证" : metadataSession?.hasCookie ? "待验证" : "未导入"}
-              </span>
-            </div>
-            <div className="settings-note">
-              <div>来源：{metadataSession?.source || "未设置"}</div>
-              <div>状态：{metadataSession?.message || "未导入浏览器会话"}</div>
-              {metadataSession?.updatedAt ? <div>更新时间：{metadataSession.updatedAt}</div> : null}
-            </div>
-            <div className="settings-button-row">
-              <button className="primary-button" type="button" onClick={handleImportSession} disabled={sessionBusy}>
-                {sessionBusy ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
-                <span>导入浏览器会话</span>
-              </button>
-              <button className="ghost-button" type="button" onClick={() => onOpenVerificationPage(verificationUrl)} disabled={sessionBusy}>
-                <span>打开验证页</span>
-              </button>
-              <button className="ghost-button" type="button" onClick={handleRefreshSessionStatus} disabled={sessionBusy}>
-                <span>刷新状态</span>
-              </button>
-              <button
-                className="ghost-button"
-                type="button"
-                onClick={handleRefreshAllAvatars}
-                disabled={sessionBusy || actorCount === 0 || !draft.onlineMetadataEnabled}
-              >
-                <span>{`刷新全部头像${actorCount > 0 ? ` (${actorCount})` : ""}`}</span>
-              </button>
-              <button className="ghost-button" type="button" onClick={handleClearSession} disabled={sessionBusy || !metadataSession?.hasCookie}>
-                <span>清除会话</span>
-              </button>
-            </div>
-            <label className="path-field">
-              <span>手动 Cookie</span>
-              <div className="stack-field">
-                <textarea value={manualCookie} onChange={(event) => setManualCookie(event.target.value)} placeholder="粘贴浏览器请求头里的 Cookie 内容" />
-                <button className="ghost-button" type="button" onClick={handleSaveManualSession} disabled={sessionBusy || !manualCookie.trim()}>
-                  <span>保存手动会话</span>
-                </button>
-              </div>
-            </label>
-            {sessionMessage ? <div className="muted-box">{sessionMessage}</div> : null}
+          <div className="settings-button-row">
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={handleRefreshAllAvatars}
+              disabled={sessionBusy || actorCount === 0 || !draft.onlineMetadataEnabled}
+            >
+              <span>{`刷新全部头像${actorCount > 0 ? ` (${actorCount})` : ""}`}</span>
+            </button>
           </div>
+          {sessionMessage ? <div className="muted-box">{sessionMessage}</div> : null}
         </div>
         <div className="modal-actions">
           <button className="ghost-button" onClick={onClose}>取消</button>
@@ -2175,33 +2003,6 @@ function NumberField({
           value={value}
           onChange={(event) => onChange(Number(event.target.value))}
         />
-      </div>
-    </label>
-  );
-}
-
-function SelectField({
-  label,
-  value,
-  onChange,
-  options
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  options: Array<{ label: string; value: string }>;
-}) {
-  return (
-    <label className="path-field">
-      <span>{label}</span>
-      <div>
-        <select value={value} onChange={(event) => onChange(event.target.value)}>
-          {options.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
       </div>
     </label>
   );

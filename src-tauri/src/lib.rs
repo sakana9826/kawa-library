@@ -34,9 +34,10 @@ use windows_sys::Win32::Networking::WinHttp::{
     WinHttpAddRequestHeaders, WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest,
     WinHttpQueryDataAvailable, WinHttpQueryHeaders, WinHttpReadData, WinHttpReceiveResponse,
     WinHttpSendRequest, WinHttpSetOption, WinHttpSetTimeouts, INTERNET_DEFAULT_HTTPS_PORT,
-    INTERNET_DEFAULT_HTTP_PORT, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_ADDREQ_FLAG_ADD,
-    WINHTTP_FLAG_SECURE, WINHTTP_OPTION_REDIRECT_POLICY, WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS,
-    WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_STATUS_CODE,
+    INTERNET_DEFAULT_HTTP_PORT, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_ACCESS_TYPE_NAMED_PROXY,
+    WINHTTP_ADDREQ_FLAG_ADD, WINHTTP_FLAG_SECURE, WINHTTP_OPTION_REDIRECT_POLICY,
+    WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS, WINHTTP_QUERY_FLAG_NUMBER,
+    WINHTTP_QUERY_STATUS_CODE,
 };
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Security::Cryptography::{CryptUnprotectData, CRYPT_INTEGER_BLOB};
@@ -748,15 +749,6 @@ async fn search_archive_metadata(
         .db
         .lock()
         .map_err(|_| "Database lock is poisoned".to_string())?;
-    if result.message.contains("年龄验证页") {
-        touch_metadata_session_status(
-            &db,
-            &site_host,
-            "blocked",
-            "JavBus 返回年龄验证页，请先在设置中导入浏览器会话，或打开验证页完成验证后再导入",
-        )
-        .map_err(|error| error.to_string())?;
-    }
     persist_archive_lookup(&db, &result).map_err(|error| error.to_string())?;
     if let (Some(actor_name), Some(actor_path)) = (&result.actor_name, &result.actor_path) {
         persist_actor_profile(
@@ -1084,23 +1076,6 @@ fn refresh_actor_avatar(
     let source_url = build_actor_search_url(site, &actor_name);
     let html = http_get_text_with_session(&source_url, session.as_ref())
         .map_err(|error| error.to_string())?;
-    if is_age_verification_page(&html) {
-        let db = state
-            .db
-            .lock()
-            .map_err(|_| "Database lock is poisoned".to_string())?;
-        touch_metadata_session_status(
-            &db,
-            &site_host,
-            "blocked",
-            "JavBus 返回年龄验证页，请先在设置中导入浏览器会话，或打开验证页完成验证后再导入",
-        )
-        .map_err(|error| error.to_string())?;
-        return Err(
-            "JavBus 返回年龄验证页，请先在设置中导入浏览器会话，或打开验证页完成验证后再导入"
-                .to_string(),
-        );
-    }
     let avatar_url = extract_searchstar_avatar_url(&html, &source_url)
         .or_else(|| extract_actor_avatar_url(&html, &source_url))
         .or_else(|| extract_first_image_url(&html, &source_url))
@@ -3791,11 +3766,6 @@ fn lookup_javbus_metadata(
 ) -> Result<ArchiveLookup> {
     let search_url = build_metadata_search_url(site_url, code);
     let search_html = http_get_text_with_session(&search_url, session).context("搜索页请求失败")?;
-    if is_age_verification_page(&search_html) {
-        anyhow::bail!(
-            "JavBus 返回年龄验证页，请先在设置中导入浏览器会话，或打开验证页完成验证后再导入"
-        );
-    }
     let mut search_actor_names = extract_actor_names(&search_html);
     let mut resolved_source_url = search_url.clone();
 
@@ -4707,10 +4677,25 @@ fn http_get(
 
     unsafe {
         let agent = to_wide("Kawa Library/0.1");
+        // 优先读取系统代理（普通梯子，如 mihomo 的 127.0.0.1:7890）显式指定，
+        // 避免 WinHTTP 的 DEFAULT_PROXY 在某些环境下拿不到代理而直连导致连不上站点。
+        let proxy_opt = system_proxy_server();
+        let (access_type, proxy_ptr) = match proxy_opt.as_deref() {
+            Some(proxy) => {
+                let proxy_wide = to_wide(proxy);
+                (WINHTTP_ACCESS_TYPE_NAMED_PROXY, proxy_wide)
+            }
+            None => (WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, Vec::new()),
+        };
+        let proxy_arg = if proxy_ptr.is_empty() {
+            ptr::null()
+        } else {
+            proxy_ptr.as_ptr()
+        };
         let session = InternetHandle(WinHttpOpen(
             agent.as_ptr(),
-            WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-            ptr::null(),
+            access_type,
+            proxy_arg,
             ptr::null(),
             0,
         ));
@@ -4854,6 +4839,53 @@ impl Drop for InternetHandle {
 #[cfg(target_os = "windows")]
 fn to_wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// 读取系统（IE/WinINET）代理设置里的代理服务器地址，例如 mihomo 的 `127.0.0.1:7890`。
+/// 返回 None 表示系统未启用代理或没有代理地址。
+#[cfg(target_os = "windows")]
+fn system_proxy_server() -> Option<String> {
+    use windows_sys::Win32::Networking::WinHttp::{
+        WinHttpGetIEProxyConfigForCurrentUser, WINHTTP_CURRENT_USER_IE_PROXY_CONFIG,
+    };
+    unsafe {
+        let mut config: WINHTTP_CURRENT_USER_IE_PROXY_CONFIG = Default::default();
+        if WinHttpGetIEProxyConfigForCurrentUser(&mut config) == 0 {
+            return None;
+        }
+        // 优先读取显式代理地址（lpszProxy），若为空且启用了自动检测/PAC，也拿不到可用地址。
+        let proxy = read_wide_owned(config.lpszProxy);
+        // 释放 WinHTTP 分配的字符串内存。
+        if !config.lpszAutoConfigUrl.is_null() {
+            LocalFree(config.lpszAutoConfigUrl as *mut c_void);
+        }
+        if !config.lpszProxy.is_null() {
+            LocalFree(config.lpszProxy as *mut c_void);
+        }
+        if !config.lpszProxyBypass.is_null() {
+            LocalFree(config.lpszProxyBypass as *mut c_void);
+        }
+        proxy
+    }
+}
+
+/// 把 WinHTTP 返回的以 null 结尾的 UTF-16 字符串读成 String；空指针返回 None。
+#[cfg(target_os = "windows")]
+unsafe fn read_wide_owned(ptr: *mut u16) -> Option<String> {
+    if ptr.is_null() {
+        return None;
+    }
+    let mut len = 0usize;
+    while *ptr.add(len) != 0 {
+        len += 1;
+    }
+    let slice = std::slice::from_raw_parts(ptr, len);
+    let value = String::from_utf16_lossy(slice);
+    if value.trim().is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 fn is_video_extension(extension: &str) -> bool {
