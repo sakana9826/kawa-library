@@ -3995,9 +3995,14 @@ fn is_detail_page_url(url: &str, compact_code: &str) -> bool {
         return false;
     }
     let upper_path = path.to_ascii_uppercase();
+    // 只排除真正的“女优页”路径(/star/演员名)与搜索/论坛页。
+    // 注意:不能用 starts_with("STAR") —— 那会误伤 START-xxx / STARS-xxx 这类
+    // SODSTAR 番号详情页(路径形如 /START-415),导致详情页链接被当成女优页过滤掉,
+    // 最终解析不出演员名而兜底成 "000"。
     if upper_path.starts_with("SEARCH")
         || upper_path.starts_with("SEARCHSTAR")
-        || upper_path.starts_with("STAR")
+        || upper_path.starts_with("STAR/")
+        || upper_path == "STAR"
         || upper_path.starts_with("FORUM")
     {
         return false;
@@ -5122,6 +5127,29 @@ mod tests {
             extract_detail_url(html, "https://www.javbus.com/search/SIRO-5664", "SIRO-5664"),
             Some("https://www.javbus.com/SIRO-5664".to_string())
         );
+    }
+
+    #[test]
+    fn finds_start_series_detail_page_url() {
+        // START-415 的详情页链接不应被 starts_with("STAR") 误当成女优页过滤掉
+        let html = r#"
+        <a href="/search/START-415">bad-search</a>
+        <a href="/star/5n2">女优页</a>
+        <a href="/START-415">good</a>
+        "#;
+        assert_eq!(
+            extract_detail_url(html, "https://www.javbus.com/search/START-415", "START-415"),
+            Some("https://www.javbus.com/START-415".to_string())
+        );
+    }
+
+    #[test]
+    fn still_excludes_actor_star_pages() {
+        // 女优页 /star/xxx 仍应被排除,同时 START/STARS 番号页应放行
+        assert!(!is_detail_page_url("https://www.javbus.com/star/5n2", "5N2"));
+        assert!(!is_detail_page_url("https://www.javbus.com/star", "STAR"));
+        assert!(is_detail_page_url("https://www.javbus.com/START-415", "START415"));
+        assert!(is_detail_page_url("https://www.javbus.com/STARS-120", "STARS120"));
     }
 
     #[test]
