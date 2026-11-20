@@ -3872,9 +3872,15 @@ fn match_actor_folder_by_contains(
     if needle.is_empty() {
         return None;
     }
+    // 只做「单向包含」且要求方向明确：演员目录名必须包含解析出的演员名，
+    // 而不是反过来（否则一个过短的解析名会误配到多个无关目录）。
+    // 同时要求 needle 至少 2 个字符，避免单字符/过短片段误匹配。
+    if needle.chars().count() < 2 {
+        return None;
+    }
     actors
         .iter()
-        .find(|actor| actor.name.contains(needle) || needle.contains(&actor.name))
+        .find(|actor| actor.name.contains(needle))
         .cloned()
 }
 

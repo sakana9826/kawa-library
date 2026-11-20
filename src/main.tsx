@@ -1339,7 +1339,6 @@ function ArchivePage({
         siteUrl: settings.metadataSiteUrl
       });
       setLookups((current) => ({ ...current, [result.code]: result }));
-      if (result.actorPath) setSelectedActorPath(result.actorPath);
       setArchiveMessage("");
     } catch (err) {
       setArchiveMessage(formatError(err));
@@ -1401,35 +1400,43 @@ function ArchivePage({
 
   async function moveToActor() {
     if (!selectedVideo) return;
+    // 归档目标必须绑定「当前选中的视频」，从当前视频自己的 lookup / 本地同番号
+    // 重新解析一次，避免自动搜索回调残留的 selectedActorPath 串到别的视频上。
+    // 只有当用户手动选择的候选属于当前视频时，才采纳；否则用当前视频的候选首位。
+    const candidatePaths = candidates.map((actor) => actor.path);
+    const targetPath =
+      (selectedActorPath && candidatePaths.includes(selectedActorPath)
+        ? selectedActorPath
+        : candidates[0]?.path) ?? null;
+    if (!targetPath) {
+      if (createActorName) {
+        await moveToNewActor();
+      }
+      return;
+    }
     if (movePreview && movePreview.status !== "ready") {
       const message = previewConflictMessage(movePreview);
       setArchiveMessage(message);
       window.alert(message);
       return;
     }
-    if (effectiveActorPath && movePreview?.status === "ready") {
-      setArchiveBusy(true);
-      try {
-        const result = await invoke<OperationResult>("execute_archive_move", {
-          rootPath: settings.rootPath,
-          appreciationPath: settings.appreciationPath,
-          videoPath: selectedVideo.path,
-          actorPath: effectiveActorPath
-        });
-        setArchiveMessage(operationSummary("归档完成", result));
-        showOperationIssue(result, "归档失败");
-        if (result.success > 0) await onArchived();
-      } catch (err) {
-        const message = formatError(err);
-        setArchiveMessage(message);
-        window.alert(message);
-      } finally {
-        setArchiveBusy(false);
-      }
-      return;
-    }
-    if (createActorName) {
-      await moveToNewActor();
+    setArchiveBusy(true);
+    try {
+      const result = await invoke<OperationResult>("execute_archive_move", {
+        rootPath: settings.rootPath,
+        appreciationPath: settings.appreciationPath,
+        videoPath: selectedVideo.path,
+        actorPath: targetPath
+      });
+      setArchiveMessage(operationSummary("归档完成", result));
+      showOperationIssue(result, "归档失败");
+      if (result.success > 0) await onArchived();
+    } catch (err) {
+      const message = formatError(err);
+      setArchiveMessage(message);
+      window.alert(message);
+    } finally {
+      setArchiveBusy(false);
     }
   }
 
