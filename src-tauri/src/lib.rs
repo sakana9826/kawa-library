@@ -42,7 +42,7 @@ use windows_sys::Win32::Networking::WinHttp::{
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Security::Cryptography::{CryptUnprotectData, CRYPT_INTEGER_BLOB};
 
-const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "avi", "wmv", "mov", "ts", "m4v"];
+const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "avi", "wmv", "mov", "ts", "m4v", "mpg"];
 const INCOMPLETE_EXTENSIONS: &[&str] = &["xltd", "part", "tmp", "!qb", "crdownload"];
 const DOWNLOAD_FOLDER: &str = "_downloading";
 const APPRECIATION_FOLDER: &str = "_appreciation";
@@ -5077,6 +5077,16 @@ mod tests {
         assert!(is_incomplete_extension("xltd"));
         assert!(is_incomplete_extension("PART"));
         assert!(!is_incomplete_extension("mp4"));
+    }
+
+    #[test]
+    fn recognizes_video_extensions() {
+        assert!(is_video_extension("mp4"));
+        assert!(is_video_extension("mkv"));
+        assert!(is_video_extension("mpg"));
+        assert!(!is_video_extension("txt"));
+        assert!(!is_video_extension("torrent"));
+        assert!(!is_video_extension("xltd"));
     }
 
     #[test]
