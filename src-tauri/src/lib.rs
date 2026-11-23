@@ -2181,6 +2181,40 @@ fn normalize_ltx_suffix(base: &str) -> String {
     ltx_tail.replace(base, "-U").to_string()
 }
 
+/// 清洗番号后缀里的画质标记与重复标记。
+///
+/// 最近三个月出现两类脏后缀：
+///   1. 画质标记混入番号后缀，如 `SSIS-181-4K60-U`、`SSIS-338-4K-U`；
+///   2. 无码标记重复叠加，如 `TEK-071-U-U`。
+///
+/// 本函数在保留番号本体(如 `SSIS-181`)与语义标记(`U`/`C`/`UC`)的前提下，
+/// 剔除画质标记并把重复标记去重，得到 `SSIS-181-U`、`TEK-071-U`。
+fn clean_code_suffix(base: &str) -> String {
+    let code = Regex::new(r"(?i)^((?:FC2PPV|[0-9]{3}[A-Z]+|[A-Z]{2,8})-\d{2,8})").unwrap();
+    let Some(captures) = code.captures(base) else {
+        return base.to_string();
+    };
+    let code_text = captures[1].to_ascii_uppercase();
+    let rest = &base[captures.get(1).map(|m| m.end()).unwrap_or(0)..];
+
+    // 从后缀段里抽取语义标记：U(无码)、C(有码)、UC(有码转无码)
+    let upper = rest.to_ascii_uppercase();
+    let has_uc = upper.contains("UC");
+    let has_u = !has_uc && upper.contains('U');
+    let has_c = !has_uc && !has_u && upper.contains('C');
+
+    let suffix = if has_uc {
+        "-UC"
+    } else if has_u {
+        "-U"
+    } else if has_c {
+        "-C"
+    } else {
+        ""
+    };
+    format!("{}{}", code_text, suffix)
+}
+
 fn normalize_uncensored_suffix(base: &str) -> String {
     let marker = Regex::new(r"(?i)(UNCENSORED|RESTORED)").unwrap();
     if !marker.is_match(base) {
@@ -2455,6 +2489,8 @@ fn build_target_file_name(source_name: &str, options: &ProcessingOptions) -> Str
     }
 
     base = normalize_ltx_suffix(&base);
+
+    base = clean_code_suffix(&base);
 
     if options.normalize_uncensored_suffix {
         base = normalize_uncensored_suffix(&base);
@@ -5048,6 +5084,23 @@ mod tests {
         assert_eq!(normalize_ltx_suffix("IPZZ-037-LTX"), "IPZZ-037-U");
         assert_eq!(normalize_ltx_suffix("IPZZ-037LTX"), "IPZZ-037-U");
         assert_eq!(normalize_ltx_suffix("IPZZ-037-UC"), "IPZZ-037-UC");
+    }
+
+    #[test]
+    fn cleans_quality_and_duplicated_suffix_markers() {
+        // 画质标记混入番号后缀
+        assert_eq!(clean_code_suffix("SSIS-181-4K60-U"), "SSIS-181-U");
+        assert_eq!(clean_code_suffix("SSIS-338-4K-U"), "SSIS-338-U");
+        assert_eq!(clean_code_suffix("STARS-722-4K-U"), "STARS-722-U");
+        // 无码标记重复叠加
+        assert_eq!(clean_code_suffix("TEK-071-U-U"), "TEK-071-U");
+        assert_eq!(clean_code_suffix("PRED-907-U-U"), "PRED-907-U");
+        // 正常的单标记不应被破坏
+        assert_eq!(clean_code_suffix("SNIS-623-UC"), "SNIS-623-UC");
+        assert_eq!(clean_code_suffix("MIKR-089-U"), "MIKR-089-U");
+        assert_eq!(clean_code_suffix("IPZZ-037-C"), "IPZZ-037-C");
+        // 无标记番号保持原样
+        assert_eq!(clean_code_suffix("SNIS-440"), "SNIS-440");
     }
 
     #[test]
